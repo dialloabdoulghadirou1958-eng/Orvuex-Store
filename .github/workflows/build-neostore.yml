@@ -30,29 +30,49 @@ jobs:
       - name: Compilation avec Gradle
         run: ./gradlew assembleRelease --no-daemon
 
-      # ÉTAPE CORRIGÉE : Utilisation d'une action dédiée qui sait où trouver apksigner
-      - name: Signature automatique de l'APK
-        uses: r0adkll/sign-android-release@v1
-        id: sign_app
-        with:
-          releaseDirectory: build/outputs/apk/release
-          signingKeyBase64: "" # Laisser vide force l'utilisation d'une clé de debug valide
-          alias: androiddebugkey
-          keyStorePassword: android
-          keyPassword: android
+      # ÉTAPE CORRIGÉE : On trouve dynamiquement zipalign et apksigner dans le SDK Android
+      - name: Signature manuelle avec les outils du SDK
+        run: |
+          echo "=== Configuration des outils Android ==="
+          # On cherche la version la plus récente des build-tools présente sur la machine
+          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | tail -n 1)
+          echo "Version des Build Tools détectée : $BUILD_TOOLS_DIR"
+          
+          # Ajout temporaire au PATH pour cette étape
+          export PATH="$BUILD_TOOLS_DIR:$PATH"
+          
+          echo "=== Génération de la clé de débogage ==="
+          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          
+          echo "=== Recherche de l'APK de Release ==="
+          APK_RAW=$(find build/outputs/apk/release/ -name "*.apk" -type f | head -n 1)
+          
+          if [ -n "$APK_RAW" ]; then
+            echo "APK trouvé : $APK_RAW"
+            
+            echo "=== Alignement de l'APK (Zipalign) ==="
+            zipalign -v 4 "$APK_RAW" build/outputs/apk/release/Neo_Store_Aligned.apk
+            
+            echo "=== Signature de l'APK (Apksigner) ==="
+            apksigner sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out build/outputs/apk/release/Neo_Store_Final_Signed.apk build/outputs/apk/release/Neo_Store_Aligned.apk
+            
+            echo "Vérification de la signature :"
+            apksigner verify build/outputs/apk/release/Neo_Store_Final_Signed.apk
+          else
+            echo "Erreur : Impossible de trouver l'APK brut."
+            exit 1
+          fi
 
       - name: Diagnostic Système et Fichiers
         if: always()
         run: |
-          echo "=== RAM RESTANTE ==="
-          free -m
           echo "=== FICHIERS APK TROUVÉS ==="
           find . -name "*.apk" -type f -exec ls -lh {} +
 
-      # L'action de signature crée un fichier qui se termine par -signed.apk
+      # On récupère uniquement le fichier final signé et aligné
       - name: Téléverser l'APK léger et signé
         uses: actions/upload-artifact@v4
         with:
           name: NeoStore-Lightweight-Signed-APK
-          path: 'build/outputs/apk/release/*-signed.apk'
+          path: 'build/outputs/apk/release/Neo_Store_Final_Signed.apk'
           if-no-files-found: error
