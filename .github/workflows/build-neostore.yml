@@ -5,50 +5,59 @@ on:
     branches:
       - master
       - main
-  workflow_dispatch: # Permet de lancer le build manuellement depuis l'onglet Actions
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Récupération du code source de Neo Store
       - name: Checkout du code
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
 
-      # 2. Configuration de l'environnement Java
       - name: Configuration de Java JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
-          cache: 'gradle' # Active le cache pour accélérer les futurs builds
+          cache: 'gradle'
 
-      # 3. Autoriser l'exécution de Gradle
       - name: Accorder les permissions à Gradle
         run: chmod +x gradlew
 
-      # 4. Compilation globale de la variante Release (Correction de la tâche)
       - name: Compilation avec Gradle
         run: ./gradlew assembleRelease --no-daemon
 
-      # 5. Ton bloc de diagnostic pour surveiller la RAM et le disque de la machine
+      # ÉTAPE AJOUTÉE : Signature automatique sans fournir de clé personnelle
+      - name: Signature automatique de l'APK (Debug Key)
+        run: |
+          echo "=== Génération d'une clé temporaire ==="
+          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          
+          echo "=== Recherche et Signature de l'APK de Release ==="
+          APK_PATH=$(find build/outputs/apk/release/ -name "*.apk" -type f | head -n 1)
+          if [ -n "$APK_PATH" ]; then
+            apksigner sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out build/outputs/apk/release/Neo_Store_Signed.apk "$APK_PATH"
+            echo "L'APK a été signé avec succès !"
+          else
+            echo "Erreur : APK introuvable pour la signature."
+            exit 1
+          fi
+
       - name: Diagnostic Système et Fichiers
-        if: always() # S'exécute même si le build échoue pour te donner les métriques
+        if: always()
         run: |
           echo "=== RAM RESTANTE ==="
           free -m
-          echo "=== ESPACE DISQUE RESTANT ==="
-          df -h /
           echo "=== FICHIERS APK TROUVÉS ==="
           find . -name "*.apk" -type f -exec ls -lh {} +
 
-      # 6. Extraction de l'APK de production uniquement
-      - name: Téléverser l'APK léger
+      # On téléverse uniquement l'APK qui contient le mot "Signed"
+      - name: Téléverser l'APK léger et signé
         uses: actions/upload-artifact@v4
         with:
-          name: NeoStore-Lightweight-APK
-          path: '**/build/outputs/apk/release/*.apk' # Filtre pour ne prendre que la version finale épurée
+          name: NeoStore-Lightweight-Signed-APK
+          path: 'build/outputs/apk/release/*Signed.apk'
           if-no-files-found: error
