@@ -30,21 +30,16 @@ jobs:
       - name: Compilation avec Gradle
         run: ./gradlew assembleRelease --no-daemon
 
-      # ÉTAPE AJOUTÉE : Signature automatique sans fournir de clé personnelle
-      - name: Signature automatique de l'APK (Debug Key)
-        run: |
-          echo "=== Génération d'une clé temporaire ==="
-          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-          
-          echo "=== Recherche et Signature de l'APK de Release ==="
-          APK_PATH=$(find build/outputs/apk/release/ -name "*.apk" -type f | head -n 1)
-          if [ -n "$APK_PATH" ]; then
-            apksigner sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out build/outputs/apk/release/Neo_Store_Signed.apk "$APK_PATH"
-            echo "L'APK a été signé avec succès !"
-          else
-            echo "Erreur : APK introuvable pour la signature."
-            exit 1
-          fi
+      # ÉTAPE CORRIGÉE : Utilisation d'une action dédiée qui sait où trouver apksigner
+      - name: Signature automatique de l'APK
+        uses: r0adkll/sign-android-release@v1
+        id: sign_app
+        with:
+          releaseDirectory: build/outputs/apk/release
+          signingKeyBase64: "" # Laisser vide force l'utilisation d'une clé de debug valide
+          alias: androiddebugkey
+          keyStorePassword: android
+          keyPassword: android
 
       - name: Diagnostic Système et Fichiers
         if: always()
@@ -54,10 +49,10 @@ jobs:
           echo "=== FICHIERS APK TROUVÉS ==="
           find . -name "*.apk" -type f -exec ls -lh {} +
 
-      # On téléverse uniquement l'APK qui contient le mot "Signed"
+      # L'action de signature crée un fichier qui se termine par -signed.apk
       - name: Téléverser l'APK léger et signé
         uses: actions/upload-artifact@v4
         with:
           name: NeoStore-Lightweight-Signed-APK
-          path: 'build/outputs/apk/release/*Signed.apk'
+          path: 'build/outputs/apk/release/*-signed.apk'
           if-no-files-found: error
